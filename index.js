@@ -1,3 +1,4 @@
+// ======= index.js =======
 import express from "express";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
@@ -12,6 +13,8 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
+
+const playerNames = new Map();
 
 app.get("/webhook", (req, res) => {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -38,6 +41,7 @@ app.post("/webhook", async (req, res) => {
     // RESET player
     if (text.toLowerCase() === "reset") {
       resetPlayer(from);
+      playerNames.delete(from);
       await sendMessage(from, "✅ Data kamu sudah dihapus. Silakan mulai lagi dengan format: Namamu - easy/hard");
       res.sendStatus(200);
       return;
@@ -46,41 +50,50 @@ app.post("/webhook", async (req, res) => {
     // Join Game
     if (/ - ?(easy|hard)/i.test(text)) {
       const [name, modeRaw] = text.split(" - ");
+      const nameClean = name.trim();
       const mode = modeRaw.trim().toLowerCase();
-      addPlayer(from, name.trim(), mode);
+      playerNames.set(from, nameClean);
+      addPlayer(from, nameClean, mode);
       const clue = getClue(mode);
-      await sendMessage(from, `Hai ${name.trim()}! Selamat datang di Unsolved Case.\nMode: ${mode}\n🕒 Timer dimulai sekarang.\n\nClue pertama:\n${clue}`);
+      await sendMessage(from, `Halo ${nameClean}! Selamat datang di Unsolved Case.\nMode: ${mode}\n🕒 Timer dimulai sekarang.\n\nClue pertama:\n${clue}`);
     } 
     // Kirim jawaban
     else if (text.toLowerCase().startsWith("jawab:")) {
-      const jawaban = text.slice(6).trim();
-      const player = getPlayer(from);
-      if (!player) {
+      const name = playerNames.get(from);
+      if (!name) {
         await sendMessage(from, "Kamu belum memulai permainan. Kirim: Namamu - easy/hard");
+        res.sendStatus(200);
+        return;
+      }
+      const player = getPlayer(from, name);
+      if (!player) {
+        await sendMessage(from, "Data pemain tidak ditemukan. Coba ketik RESET lalu mulai ulang.");
+        res.sendStatus(200);
+        return;
+      }
+      const elapsed = (Date.now() - player.startTime) / 60000;
+      if (elapsed > 30) {
+        await sendMessage(from, "⏳ Waktu habis! Kamu tidak berhasil memecahkan kasus ini.");
+      } else if (player.answered) {
+        await sendMessage(from, `✅ Kamu sudah menyelesaikan kasus ini sebelumnya sebagai ${player.name}. Kirim RESET untuk mengulang.`);
       } else {
-        const elapsed = (Date.now() - player.startTime) / 60000;
-        if (elapsed > 30) {
-          await sendMessage(from, "⏳ Waktu habis! Kamu tidak berhasil memecahkan kasus ini.");
-        } else if (player.answered) {
-          await sendMessage(from, `✅ Kamu sudah menyelesaikan kasus ini sebelumnya sebagai ${player.name}. Kirim RESET untuk mengulang.`);
+        const jawaban = text.slice(6).trim();
+        const isCorrect = validateAnswer(jawaban);
+        if (isCorrect) {
+          markAnswered(from, name);
+          await logPlayerData({
+            name: player.name,
+            phone: from,
+            mode: player.mode,
+            startTime: player.startTime,
+            endTime: Date.now(),
+          });
+          await sendMessage(from, `🎉 Selamat ${player.name}, kamu berhasil memecahkan kasus ini dalam ${elapsed.toFixed(1)} menit!`);
         } else {
-          const isCorrect = validateAnswer(jawaban);
-          if (isCorrect) {
-            markAnswered(from);
-            await logPlayerData({
-              name: player.name,
-              phone: from,
-              mode: player.mode,
-              startTime: player.startTime,
-              endTime: Date.now(),
-            });
-            await sendMessage(from, `🎉 Selamat ${player.name}, kamu berhasil memecahkan kasus ini dalam ${elapsed.toFixed(1)} menit!`);
+          if (player.mode === "easy") {
+            await sendMessage(from, "❌ Jawaban belum tepat. Hint: Perhatikan hubungan keluarga korban.");
           } else {
-            if (player.mode === "easy") {
-              await sendMessage(from, "❌ Jawaban belum tepat. Hint: Perhatikan hubungan keluarga korban.");
-            } else {
-              await sendMessage(from, "Jawaban tidak valid.");
-            }
+            await sendMessage(from, "Jawaban tidak valid.");
           }
         }
       }
