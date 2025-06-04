@@ -5,6 +5,8 @@ import { sendMessage } from "./sendMessage.js";
 import { addPlayer, getPlayer, markAnswered } from "./playerState.js";
 import { getClue } from "./clues.js";
 import { validateAnswer } from "./validateAnswer.js";
+import { logPlayerData } from './logToSheets.js';
+
 
 dotenv.config();
 
@@ -57,6 +59,14 @@ app.post("/webhook", async (req, res) => {
           const isCorrect = validateAnswer(jawaban);
           if (isCorrect) {
             markAnswered(from);
+            await logPlayerData({
+                name: player.name,
+                phone: from,
+                mode: player.mode,
+                startTime: player.startTime,
+                endTime: Date.now(),
+            });
+
             await sendMessage(from, `🎉 Selamat ${player.name}, kamu berhasil memecahkan kasus ini dalam ${elapsed.toFixed(1)} menit!`);
           } else {
             if (player.mode === "easy") {
