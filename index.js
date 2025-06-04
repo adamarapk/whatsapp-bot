@@ -38,11 +38,20 @@ app.post("/webhook", async (req, res) => {
   const text = message?.text?.body;
 
   if (text && from) {
+    const lowerText = text.toLowerCase().trim();
+
     // RESET player
-    if (text.toLowerCase() === "reset") {
+    if (lowerText === "reset") {
       resetPlayer(from);
       playerNames.delete(from);
-      await sendMessage(from, "✅ Data kamu sudah dihapus. Silakan mulai lagi dengan format: Namamu - easy/hard");
+      await sendMessage(from, "✅ Data kamu sudah dihapus. Silakan ketik START untuk memulai kembali.");
+      res.sendStatus(200);
+      return;
+    }
+
+    // START
+    if (lowerText === "start") {
+      await sendMessage(from, "👋 Selamat datang di Unsolved Case!\nSilakan daftar dengan format: Namamu - easy/hard");
       res.sendStatus(200);
       return;
     }
@@ -54,14 +63,33 @@ app.post("/webhook", async (req, res) => {
       const mode = modeRaw.trim().toLowerCase();
       playerNames.set(from, nameClean);
       addPlayer(from, nameClean, mode);
-      const clue = getClue(mode);
-      await sendMessage(from, `Halo ${nameClean}! Selamat datang di Unsolved Case.\nMode: ${mode}\n🕒 Timer dimulai sekarang.\n\nClue pertama:\n${clue}`);
-    } 
+      await sendMessage(from, `🕵️‍♂️ Permainan kamu telah dimulai, ${nameClean}!\nMode: ${mode}\n⏱️ Waktu dimulai sekarang.`);
+      if (mode === "easy") {
+        await sendMessage(from, "Ketik *hint* jika kamu ingin melihat clue.");
+      }
+      res.sendStatus(200);
+      return;
+    }
+
+    // Hint (mode easy only)
+    if (lowerText === "hint") {
+      const name = playerNames.get(from);
+      const player = getPlayer(from, name);
+      if (player && player.mode === "easy") {
+        const clue = getClue("easy");
+        await sendMessage(from, `📄 Clue: ${clue}`);
+      } else {
+        await sendMessage(from, "❌ Hint hanya tersedia untuk mode easy.");
+      }
+      res.sendStatus(200);
+      return;
+    }
+
     // Kirim jawaban
-    else if (text.toLowerCase().startsWith("jawab:")) {
+    if (lowerText.startsWith("jawab:")) {
       const name = playerNames.get(from);
       if (!name) {
-        await sendMessage(from, "Kamu belum memulai permainan. Kirim: Namamu - easy/hard");
+        await sendMessage(from, "Kamu belum memulai permainan. Ketik START dulu.");
         res.sendStatus(200);
         return;
       }
@@ -75,7 +103,7 @@ app.post("/webhook", async (req, res) => {
       if (elapsed > 30) {
         await sendMessage(from, "⏳ Waktu habis! Kamu tidak berhasil memecahkan kasus ini.");
       } else if (player.answered) {
-        await sendMessage(from, `✅ Kamu sudah menyelesaikan kasus ini sebelumnya sebagai ${player.name}. Kirim RESET untuk mengulang.`);
+        await sendMessage(from, `✅ Kamu sudah menyelesaikan kasus ini sebelumnya sebagai ${player.name}. Ketik RESET untuk mengulang.`);
       } else {
         const jawaban = text.slice(6).trim();
         const isCorrect = validateAnswer(jawaban);
@@ -97,9 +125,12 @@ app.post("/webhook", async (req, res) => {
           }
         }
       }
-    } else {
-      await sendMessage(from, "Kirim Namamu - easy/hard untuk memulai permainan.");
+      res.sendStatus(200);
+      return;
     }
+
+    // Default
+    await sendMessage(from, "Ketik START untuk memulai permainan atau RESET untuk mengulang.");
   }
 
   res.sendStatus(200);
