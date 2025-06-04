@@ -20,3 +20,7 @@ export function markAnswered(phone) {
     players.set(phone, player);
   }
 }
+
+export function resetPlayer(phone) {
+  players.delete(phone);
+}

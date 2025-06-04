@@ -2,11 +2,10 @@ import express from "express";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
 import { sendMessage } from "./sendMessage.js";
-import { addPlayer, getPlayer, markAnswered } from "./playerState.js";
+import { addPlayer, getPlayer, markAnswered, resetPlayer } from "./playerState.js";
 import { getClue } from "./clues.js";
 import { validateAnswer } from "./validateAnswer.js";
-import { logPlayerData } from './logToSheets.js';
-
+import { logPlayerData } from "./logToSheets.js";
 
 dotenv.config();
 
@@ -36,12 +35,21 @@ app.post("/webhook", async (req, res) => {
   const text = message?.text?.body;
 
   if (text && from) {
+    // RESET player
+    if (text.toLowerCase() === "reset") {
+      resetPlayer(from);
+      await sendMessage(from, "✅ Data kamu sudah dihapus. Silakan mulai lagi dengan format: Namamu - easy/hard");
+      res.sendStatus(200);
+      return;
+    }
+
     // Join Game
-    if (text.toLowerCase().includes("- easy") || text.toLowerCase().includes("- hard")) {
-      const [name, mode] = text.split(" - ");
-      addPlayer(from, name.trim(), mode.trim().toLowerCase());
-      const clue = getClue(mode.trim().toLowerCase());
-      await sendMessage(from, `Halo ${name.trim()}! Selamat datang di Unsolved Case.\nMode: ${mode.trim()}\n🕒 Timer dimulai sekarang.\n\nClue pertama:\n${clue}`);
+    if (/ - ?(easy|hard)/i.test(text)) {
+      const [name, modeRaw] = text.split(" - ");
+      const mode = modeRaw.trim().toLowerCase();
+      addPlayer(from, name.trim(), mode);
+      const clue = getClue(mode);
+      await sendMessage(from, `Halo ${name.trim()}! Selamat datang di Unsolved Case.\nMode: ${mode}\n🕒 Timer dimulai sekarang.\n\nClue pertama:\n${clue}`);
     } 
     // Kirim jawaban
     else if (text.toLowerCase().startsWith("jawab:")) {
@@ -54,19 +62,18 @@ app.post("/webhook", async (req, res) => {
         if (elapsed > 30) {
           await sendMessage(from, "⏳ Waktu habis! Kamu tidak berhasil memecahkan kasus ini.");
         } else if (player.answered) {
-          await sendMessage(from, "✅ Kamu sudah memecahkan kasus ini sebelumnya!");
+          await sendMessage(from, `✅ Kamu sudah menyelesaikan kasus ini sebelumnya sebagai ${player.name}. Kirim RESET untuk mengulang.`);
         } else {
           const isCorrect = validateAnswer(jawaban);
           if (isCorrect) {
             markAnswered(from);
             await logPlayerData({
-                name: player.name,
-                phone: from,
-                mode: player.mode,
-                startTime: player.startTime,
-                endTime: Date.now(),
+              name: player.name,
+              phone: from,
+              mode: player.mode,
+              startTime: player.startTime,
+              endTime: Date.now(),
             });
-
             await sendMessage(from, `🎉 Selamat ${player.name}, kamu berhasil memecahkan kasus ini dalam ${elapsed.toFixed(1)} menit!`);
           } else {
             if (player.mode === "easy") {
