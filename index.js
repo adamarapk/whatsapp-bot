@@ -2,6 +2,7 @@
 import express from "express";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
+import OpenAI from "openai";
 import { sendMessage } from "./sendMessage.js";
 import { addPlayer, getPlayer, markAnswered, resetPlayer } from "./playerState.js";
 import { getClue } from "./clues.js";
@@ -15,6 +16,7 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 
 const playerNames = new Map();
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.get("/webhook", (req, res) => {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -40,7 +42,6 @@ app.post("/webhook", async (req, res) => {
   if (text && from) {
     const lowerText = text.toLowerCase().trim();
 
-    // RESET player
     if (lowerText === "reset") {
       resetPlayer(from);
       playerNames.delete(from);
@@ -49,21 +50,24 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // START
     if (lowerText === "start") {
       await sendMessage(from, "👋 Selamat datang di Unsolved Case!\nSilakan daftar dengan format: Namamu - easy/hard");
       res.sendStatus(200);
       return;
     }
 
-    // Join Game
     if (/ - ?(easy|hard)/i.test(text)) {
       const [name, modeRaw] = text.split(" - ");
       const nameClean = name.trim();
       const mode = modeRaw.trim().toLowerCase();
       playerNames.set(from, nameClean);
       addPlayer(from, nameClean, mode);
-      await sendMessage(from, `🕵️‍♂️ Permainan kamu telah dimulai, ${nameClean}!\nMode: ${mode}\n⏱️ Waktu dimulai sekarang.`);
+      await sendMessage(from, `🕵️‍♂️ Permainan kamu telah dimulai, ${nameClean}!
+Mode: ${mode}
+⏱️ Waktu dimulai sekarang.
+
+Format jawaban:
+Ketik: Jawab: [isi jawaban kamu]`);
       if (mode === "easy") {
         await sendMessage(from, "Ketik *hint* jika kamu ingin melihat clue.");
       }
@@ -71,13 +75,21 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Hint (mode easy only)
     if (lowerText === "hint") {
       const name = playerNames.get(from);
       const player = getPlayer(from, name);
       if (player && player.mode === "easy") {
         const clue = getClue("easy");
-        await sendMessage(from, `📄 Clue: ${clue}`);
+        const response = await openai.chat.completions.create({
+          model: "gpt-3.5-turbo",
+          messages: [
+            { role: "system", content: "Kamu adalah asisten detektif yang memberikan hint singkat tanpa mengungkap jawaban." },
+            { role: "user", content: `Berikan satu hint pendek yang bermanfaat berdasarkan clue berikut: ${clue}` }
+          ],
+          max_tokens: 60,
+          temperature: 0.7
+        });
+        await sendMessage(from, `💡 Hint: ${response.choices[0].message.content.trim()}`);
       } else {
         await sendMessage(from, "❌ Hint hanya tersedia untuk mode easy.");
       }
@@ -85,7 +97,6 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Kirim jawaban
     if (lowerText.startsWith("jawab:")) {
       const name = playerNames.get(from);
       if (!name) {
@@ -117,19 +128,27 @@ app.post("/webhook", async (req, res) => {
             endTime: Date.now(),
           });
           await sendMessage(from, `🎉 Selamat ${player.name}, kamu berhasil memecahkan kasus ini dalam ${elapsed.toFixed(1)} menit!`);
-        } else {
-          if (player.mode === "easy") {
-            await sendMessage(from, "❌ Jawaban belum tepat. Hint: Perhatikan hubungan keluarga korban.");
-          } else {
-            await sendMessage(from, "Jawaban tidak valid.");
+
+          if (player.mode === "hard") {
+            await sendMessage(from, "🧠 Sebelum kamu pergi, ceritakan: siapa pelaku, apa motifnya, dan bukti terkuatnya?");
           }
+        } else {
+          const gptFeedback = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+              { role: "system", content: "Kamu adalah AI investigatif. Beri tanggapan random yang tetap relevan atas jawaban yang salah, tanpa menyebut jawaban benar." },
+              { role: "user", content: `Pemain menjawab: ${jawaban}` }
+            ],
+            max_tokens: 80,
+            temperature: 0.9
+          });
+          await sendMessage(from, `🧐 ${gptFeedback.choices[0].message.content.trim()}`);
         }
       }
       res.sendStatus(200);
       return;
     }
 
-    // Default
     await sendMessage(from, "Ketik START untuk memulai permainan atau RESET untuk mengulang.");
   }
 
