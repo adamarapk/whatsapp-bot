@@ -2,10 +2,8 @@
 import express from "express";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
-import OpenAI from "openai";
 import { sendMessage } from "./sendMessage.js";
 import { addPlayer, getPlayer, markAnswered, resetPlayer } from "./playerState.js";
-import { getClue } from "./clues.js";
 import { validateAnswer } from "./validateAnswer.js";
 import { logPlayerData } from "./logToSheets.js";
 
@@ -15,15 +13,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 
-const playerNames = new Map();
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
+const playerStates = new Map();
 const fallbackFeedbacks = [
   "Hmm... menarik, tapi coba pikirkan hubungan antar karakter.",
   "Motifnya belum kuat. Apakah ada bukti lain?",
-  "Kamu hampir benar, tapi masih ada yang janggal.",
-  "Pikirkan kembali urutan kejadian.",
-  "Apakah kamu yakin tidak ada orang lain yang terlibat?"
+  "Kamu hampir benar, tapi masih ada yang janggal."
 ];
 
 app.get("/webhook", (req, res) => {
@@ -31,7 +25,6 @@ app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
-
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     res.status(200).send(challenge);
   } else {
@@ -45,97 +38,85 @@ app.post("/webhook", async (req, res) => {
   const message = changes?.messages?.[0];
 
   const from = message?.from;
-  const text = message?.text?.body;
+  const text = message?.text?.body?.trim();
 
-  if (text && from) {
-    const lowerText = text.toLowerCase().trim();
+  if (!from || !text) return res.sendStatus(200);
 
-    if (lowerText === "reset") {
-      resetPlayer(from);
-      playerNames.delete(from);
-      await sendMessage(from, "✅ Data kamu sudah dihapus. Silakan ketik START untuk memulai kembali.");
-      res.sendStatus(200);
-      return;
+  const state = playerStates.get(from);
+
+  if (text.toLowerCase() === "reset") {
+    playerStates.delete(from);
+    await sendMessage(from, "🔄 Data Anda telah direset. Ketik NAMA: [nama Anda] untuk memulai ulang.");
+    return res.sendStatus(200);
+  }
+
+  // Awal: Pendaftaran
+  if (!state && text.toLowerCase().startsWith("nama:")) {
+    const name = text.split(":")[1].trim();
+    playerStates.set(from, { step: "mode", name });
+    await sendMessage(from, `[Echo-8]\nTerima kasih, ${name}.\nPilih mode investigasi:\n1️⃣ EASY – hanya mencari pelaku\n2️⃣ HARD – pelaku + motif\nBalas dengan: MODE 1 atau MODE 2`);
+    return res.sendStatus(200);
+  }
+
+  // Pemilihan Mode
+  if (state?.step === "mode" && text.toLowerCase().startsWith("mode")) {
+    const mode = text.includes("2") ? "hard" : "easy";
+    const name = state.name;
+    const startTime = Date.now();
+    playerStates.set(from, { step: "main", name, mode, startTime, answered: false, clueUsed: false });
+
+    await sendMessage(from, `[Echo-8]\nKasus #8802: Pria ditemukan tewas di dalam apartemen steril tanpa bukti kekerasan.\nKunci di dalam. CCTV rusak. Waktu kematian tidak konsisten.\n\nTiga tersangka. Satu kebohongan.\n\nWaktu investigasi: 30 menit.\nPetunjuk fisik telah Anda terima.\nKetik CLUE jika butuh bantuan tambahan.\n\nKetik JAWAB untuk mengirim jawaban akhir.`);
+    return res.sendStatus(200);
+  }
+
+  // Clue tambahan (hanya bisa sekali)
+  if (text.toLowerCase() === "clue") {
+    if (state?.step === "main" && !state.clueUsed) {
+      state.clueUsed = true;
+      await sendMessage(from, `[Echo-8]\n[Permintaan disetujui.]\n\n📎 Petunjuk tambahan:\nSalah satu tersangka *mengubah pernyataannya* antara wawancara pertama dan kedua.\nPeriksa kembali catatan waktu dan kata kuncinya.`);
+    } else {
+      await sendMessage(from, `⚠️ Petunjuk hanya dapat diminta satu kali.`);
     }
+    return res.sendStatus(200);
+  }
 
-    if (lowerText === "start") {
-      await sendMessage(from, "👋 Selamat datang di Unsolved Case!\nSilakan daftar dengan format: Namamu - easy/hard");
-      res.sendStatus(200);
-      return;
+  // Jawaban akhir
+  if (text.toLowerCase() === "jawab") {
+    if (state?.step === "main") {
+      await sendMessage(from, `[Echo-8]\nMasukkan jawaban akhir Anda dalam format:\n\nNAMA PELAKU - MOTIF (jika mode HARD)\nContoh: ANDINI - Kecemburuan terhadap promosi kerja\n\nAtau cukup:\nNAMA PELAKU (jika mode EASY)`);
+      state.step = "answering";
+    } else {
+      await sendMessage(from, `⚠️ Kamu belum bisa menjawab saat ini.`);
     }
+    return res.sendStatus(200);
+  }
 
-    if (/ - ?(easy|hard)/i.test(text)) {
-      const [name, modeRaw] = text.split(" - ");
-      const nameClean = name.trim();
-      const mode = modeRaw.trim().toLowerCase();
-      playerNames.set(from, nameClean);
-      addPlayer(from, nameClean, mode);
-      await sendMessage(from, `🕵️‍♂️ Permainan kamu telah dimulai, ${nameClean}!\nMode: ${mode}\n⏱️ Waktu dimulai sekarang.\n\nFormat jawaban:\nKetik: Jawab: [isi jawaban kamu]`);
-      if (mode === "easy") {
-        await sendMessage(from, "Ketik *hint* jika kamu ingin melihat clue.");
-      }
-      res.sendStatus(200);
-      return;
+  // Validasi jawaban
+  if (state?.step === "answering") {
+    const elapsed = (Date.now() - state.startTime) / 60000;
+    const correct = validateAnswer(text, state.mode);
+    if (correct) {
+      playerStates.set(from, { ...state, answered: true });
+      await logPlayerData({
+        name: state.name,
+        phone: from,
+        mode: state.mode,
+        startTime: state.startTime,
+        endTime: Date.now(),
+      });
+      await sendMessage(from, `[Echo-8]\n✅ Jawaban diterima dan valid.\n\nKasus #8802 ditutup dengan status: Tuntas.\nWaktu dan nama Anda telah tercatat di sistem.\n\nKebenaran tidak selalu bisa diungkap, tapi Anda sudah cukup dekat.`);
+    } else {
+      const feedback = fallbackFeedbacks[Math.floor(Math.random() * fallbackFeedbacks.length)];
+      await sendMessage(from, `[Echo-8]\n⛔ Jawaban tidak sesuai dengan data investigasi kami.\n${feedback}\n\nKetik JAWAB untuk kirim ulang.`);
     }
+    return res.sendStatus(200);
+  }
 
-    if (lowerText === "hint") {
-      const name = playerNames.get(from);
-      const player = getPlayer(from, name);
-      if (player && player.mode === "easy") {
-        const clue = getClue("easy");
-        await sendMessage(from, `🧩 Clue: ${clue}`);
-      } else {
-        await sendMessage(from, "❌ Hint hanya tersedia untuk mode easy.");
-      }
-      res.sendStatus(200);
-      return;
-    }
-
-    if (lowerText.startsWith("jawab:")) {
-      const name = playerNames.get(from);
-      if (!name) {
-        await sendMessage(from, "Kamu belum memulai permainan. Ketik START dulu.");
-        res.sendStatus(200);
-        return;
-      }
-      const player = getPlayer(from, name);
-      if (!player) {
-        await sendMessage(from, "Data pemain tidak ditemukan. Coba ketik RESET lalu mulai ulang.");
-        res.sendStatus(200);
-        return;
-      }
-      const elapsed = (Date.now() - player.startTime) / 60000;
-      if (elapsed > 30) {
-        await sendMessage(from, "⏳ Waktu habis! Kamu tidak berhasil memecahkan kasus ini.");
-      } else if (player.answered) {
-        await sendMessage(from, `✅ Kamu sudah menyelesaikan kasus ini sebelumnya sebagai ${player.name}. Ketik RESET untuk mengulang.`);
-      } else {
-        const jawaban = text.slice(6).trim();
-        const isCorrect = validateAnswer(jawaban);
-        if (isCorrect) {
-          markAnswered(from, name);
-          await logPlayerData({
-            name: player.name,
-            phone: from,
-            mode: player.mode,
-            startTime: player.startTime,
-            endTime: Date.now(),
-          });
-          await sendMessage(from, `🎉 Selamat ${player.name}, kamu berhasil memecahkan kasus ini dalam ${elapsed.toFixed(1)} menit!`);
-
-          if (player.mode === "hard") {
-            await sendMessage(from, "🧠 Sebelum kamu pergi, ceritakan: siapa pelaku, apa motifnya, dan bukti terkuatnya?");
-          }
-        } else {
-          const fallback = fallbackFeedbacks[Math.floor(Math.random() * fallbackFeedbacks.length)];
-          await sendMessage(from, `🧐 ${fallback}`);
-        }
-      }
-      res.sendStatus(200);
-      return;
-    }
-
-    await sendMessage(from, "Ketik START untuk memulai permainan atau RESET untuk mengulang.");
+  // Default catch all
+  if (!state) {
+    await sendMessage(from, `[Echo-8]\nSelamat datang, Detektif.\nSistem investigasi Infinity Case versi terbatas telah diaktifkan.\n\nSebutkan nama Anda untuk memulai.\nContoh: NAMA: Reza`);
+  } else {
+    await sendMessage(from, `⚠️ Input tidak dikenali. Ketik JAWAB atau CLUE sesuai tahap Anda.`);
   }
 
   res.sendStatus(200);
