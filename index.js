@@ -18,6 +18,14 @@ app.use(bodyParser.json());
 const playerNames = new Map();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const fallbackFeedbacks = [
+  "Hmm... menarik, tapi coba pikirkan hubungan antar karakter.",
+  "Motifnya belum kuat. Apakah ada bukti lain?",
+  "Kamu hampir benar, tapi masih ada yang janggal.",
+  "Pikirkan kembali urutan kejadian.",
+  "Apakah kamu yakin tidak ada orang lain yang terlibat?"
+];
+
 app.get("/webhook", (req, res) => {
   const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
@@ -62,12 +70,7 @@ app.post("/webhook", async (req, res) => {
       const mode = modeRaw.trim().toLowerCase();
       playerNames.set(from, nameClean);
       addPlayer(from, nameClean, mode);
-      await sendMessage(from, `🕵️‍♂️ Permainan kamu telah dimulai, ${nameClean}!
-Mode: ${mode}
-⏱️ Waktu dimulai sekarang.
-
-Format jawaban:
-Ketik: Jawab: [isi jawaban kamu]`);
+      await sendMessage(from, `🕵️‍♂️ Permainan kamu telah dimulai, ${nameClean}!\nMode: ${mode}\n⏱️ Waktu dimulai sekarang.\n\nFormat jawaban:\nKetik: Jawab: [isi jawaban kamu]`);
       if (mode === "easy") {
         await sendMessage(from, "Ketik *hint* jika kamu ingin melihat clue.");
       }
@@ -80,16 +83,7 @@ Ketik: Jawab: [isi jawaban kamu]`);
       const player = getPlayer(from, name);
       if (player && player.mode === "easy") {
         const clue = getClue("easy");
-        const response = await openai.chat.completions.create({
-          model: "gpt-3.5-turbo",
-          messages: [
-            { role: "system", content: "Kamu adalah asisten detektif yang memberikan hint singkat tanpa mengungkap jawaban." },
-            { role: "user", content: `Berikan satu hint pendek yang bermanfaat berdasarkan clue berikut: ${clue}` }
-          ],
-          max_tokens: 60,
-          temperature: 0.7
-        });
-        await sendMessage(from, `💡 Hint: ${response.choices[0].message.content.trim()}`);
+        await sendMessage(from, `🧩 Clue: ${clue}`);
       } else {
         await sendMessage(from, "❌ Hint hanya tersedia untuk mode easy.");
       }
@@ -133,16 +127,8 @@ Ketik: Jawab: [isi jawaban kamu]`);
             await sendMessage(from, "🧠 Sebelum kamu pergi, ceritakan: siapa pelaku, apa motifnya, dan bukti terkuatnya?");
           }
         } else {
-          const gptFeedback = await openai.chat.completions.create({
-            model: "gpt-3.5-turbo",
-            messages: [
-              { role: "system", content: "Kamu adalah AI investigatif. Beri tanggapan random yang tetap relevan atas jawaban yang salah, tanpa menyebut jawaban benar." },
-              { role: "user", content: `Pemain menjawab: ${jawaban}` }
-            ],
-            max_tokens: 80,
-            temperature: 0.9
-          });
-          await sendMessage(from, `🧐 ${gptFeedback.choices[0].message.content.trim()}`);
+          const fallback = fallbackFeedbacks[Math.floor(Math.random() * fallbackFeedbacks.length)];
+          await sendMessage(from, `🧐 ${fallback}`);
         }
       }
       res.sendStatus(200);
