@@ -49,7 +49,7 @@ app.post("/webhook", async (req, res) => {
       const mode = modeRaw.trim().toLowerCase();
       addPlayer(from, name.trim(), mode);
       const clue = getClue(mode);
-      await sendMessage(from, `Halo ${name.trim()}! Selamat datang di Unsolved Case.\nMode: ${mode}\n🕒 Timer dimulai sekarang.\n\nClue pertama:\n${clue}`);
+      await sendMessage(from, `Hai ${name.trim()}! Selamat datang di Unsolved Case.\nMode: ${mode}\n🕒 Timer dimulai sekarang.\n\nClue pertama:\n${clue}`);
     } 
     // Kirim jawaban
     else if (text.toLowerCase().startsWith("jawab:")) {
