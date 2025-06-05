@@ -50,7 +50,6 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Awal: Pendaftaran
   if (!state && text.toLowerCase().startsWith("nama:")) {
     const name = text.split(":")[1].trim();
     playerStates.set(from, { step: "mode", name });
@@ -58,7 +57,6 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Pemilihan Mode
   if (state?.step === "mode" && text.toLowerCase().startsWith("mode")) {
     const mode = text.includes("2") ? "hard" : "easy";
     const name = state.name;
@@ -69,7 +67,6 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Clue tambahan (hanya bisa sekali)
   if (text.toLowerCase() === "clue") {
     if (state?.step === "main" && !state.clueUsed) {
       state.clueUsed = true;
@@ -80,7 +77,6 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Jawaban akhir
   if (text.toLowerCase() === "jawab") {
     if (state?.step === "main") {
       await sendMessage(from, `[Echo-8]\nMasukkan jawaban akhir Anda dalam format:\n\nNAMA PELAKU - MOTIF (jika mode HARD)\nContoh: ANDINI - Kecemburuan terhadap promosi kerja\n\nAtau cukup:\nNAMA PELAKU (jika mode EASY)`);
@@ -91,7 +87,6 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Validasi jawaban
   if (state?.step === "answering") {
     const elapsed = (Date.now() - state.startTime) / 60000;
     const correct = validateAnswer(text, state.mode);
@@ -105,6 +100,16 @@ app.post("/webhook", async (req, res) => {
         endTime: Date.now(),
       });
       await sendMessage(from, `[Echo-8]\n✅ Jawaban diterima dan valid.\n\nKasus #8802 ditutup dengan status: Tuntas.\nWaktu dan nama Anda telah tercatat di sistem.\n\nKebenaran tidak selalu bisa diungkap, tapi Anda sudah cukup dekat.`);
+
+      // jeda lalu kirim pesan 'keceplosan'
+      setTimeout(() => {
+        sendMessage(from, `[Echo-8]\nApakah kamu menyelesaikan kasus, atau hanya bermain sesuai naskah?`);
+      }, 3000);
+
+      setTimeout(() => {
+        sendMessage(from, `[SYSTEM]Terima kasih sudah bermain.`);
+      }, 6000);
+
     } else {
       const feedback = fallbackFeedbacks[Math.floor(Math.random() * fallbackFeedbacks.length)];
       await sendMessage(from, `[Echo-8]\n⛔ Jawaban tidak sesuai dengan data investigasi kami.\n${feedback}\n\nKetik JAWAB untuk kirim ulang.`);
@@ -112,7 +117,6 @@ app.post("/webhook", async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Default catch all
   if (!state) {
     await sendMessage(from, `[Echo-8]\nSelamat datang, Detektif.\nSistem investigasi Infinity Case versi terbatas telah diaktifkan.\n\nSebutkan nama Anda untuk memulai.\nContoh: NAMA: Reza`);
   } else {
