@@ -104,11 +104,11 @@ app.post("/webhook", async (req, res) => {
       // jeda lalu kirim pesan 'keceplosan'
       setTimeout(() => {
         sendMessage(from, `[Echo-8]\nApakah kamu menyelesaikan kasus, atau hanya bermain sesuai naskah?`);
-      }, 3000);
+      }, 9000);
 
       setTimeout(() => {
         sendMessage(from, `[SYSTEM]Terima kasih sudah bermain.`);
-      }, 6000);
+      }, 12000);
 
     } else {
       const feedback = fallbackFeedbacks[Math.floor(Math.random() * fallbackFeedbacks.length)];
